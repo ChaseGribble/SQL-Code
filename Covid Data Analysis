@@ -1,0 +1,100 @@
+--Viewing the data
+SELECT *
+FROM SQLCleaning.dbo.CovidDeaths$
+
+--Checking infection rates 
+SELECT location, population, MAX(total_cases) AS HighestInfect, MAX((total_cases/population))*100  AS PercentInfect
+FROM SQLCleaning.dbo.CovidDeaths$
+WHERE continent is not NULL
+GROUP BY location, population
+ORDER BY PercentInfect DESC
+
+--Checking infection rate by continent
+SELECT location, population, MAX(total_cases) AS HighestInfect, MAX((total_cases/population))*100 AS PercentInfect 
+FROM SQLCleaning.dbo.CovidDeaths$
+WHERE continent is NULL AND location NOT LIKE '%income%'
+GROUP BY location, population
+ORDER BY PercentInfect DESC
+
+--Checking infection rates for North American countries
+SELECT location, population, MAX(total_cases) AS HighestInfect, MAX((total_cases/population))*100 AS PercentInfect
+FROM SQLCleaning.dbo.CovidDeaths$
+WHERE continent = 'North America'
+GROUP BY  location, population 
+Order BY PercentInfect DESC
+
+--Checking chance of dying if infected in the United States
+SELECT location, population, MAX(total_cases) AS HighestInfect, SUM(CAST(new_deaths AS int))/MAX(total_cases)*100 AS DeathChance
+FROM SQLCleaning.dbo.CovidDeaths$
+WHERE location = 'United States'
+GROUP BY location, population
+
+--Checking deathcount in the United States
+SELECT location, population, SUM(CAST(new_cases AS int)) AS HighestInfect, SUM(CONVERT(int,new_deaths)) AS DeathCount
+FROM SQLCleaning.dbo.CovidDeaths$
+WHERE location = 'United States'
+GROUP BY location, population 
+
+--Viewing the other data set
+SELECT *
+FROM SQLCleaning.dbo.CovidVaccinations$
+
+--Checking the vaccination rate alongside infections
+SELECT dea.location, dea.population, SUM(CAST(dea.new_cases AS int)) HighestInfect, MAX((total_cases/population))*100 AS PercentInfect, SUM(CAST(new_vaccinations as int)/population)*100 AS PercentVac
+FROM SQLCleaning.dbo.CovidDeaths$ dea
+JOIN SQLCleaning.dbo.CovidVaccinations$ vac
+	ON dea.location = vac.location 
+	and dea.date = vac.date
+WHERE dea.continent is not NULL 
+GROUP BY dea.location, dea.population 
+ORDER BY PercentVac DESC
+
+--Creating a daily count of new vaccinations over time
+SELECT dea.location, dea.population, dea.date, vac.new_vaccinations, SUM(CONVERT(bigint, vac.new_vaccinations)) OVER
+	(PARTITION BY dea.location ORDER BY dea.location, dea.date) AS RollingVac
+FROM SQLCleaning.dbo.CovidDeaths$ dea
+JOIN SQLCleaning.dbo.CovidVaccinations$ vac
+	ON dea.location = vac.location 
+	and dea.date = vac.date
+WHERE dea.continent is not NULL 
+ORDER BY 1,3
+
+--Taking the previous query and adding a percentage column
+WITH PopVac AS
+(
+SELECT dea.location, dea.population, dea.date, vac.new_vaccinations, SUM(CONVERT(bigint, vac.new_vaccinations)) OVER
+	(PARTITION BY dea.location ORDER BY dea.date) AS AddVac
+FROM SQLCleaning.dbo.CovidDeaths$ dea
+JOIN SQLCleaning.dbo.CovidVaccinations$ vac
+	ON dea.location = vac.location 
+	and dea.date = vac.date
+WHERE dea.continent is not NULL 
+) 
+SELECT *, (AddVac/population)*100 AS AddPercentVac
+FROM PopVac
+
+--Same query but with a temp table and Rolling death count added 
+DROP Table if exists #PercentPopulationDead
+Create Table #PercentPopulationDead
+(
+Location nvarchar(255),
+Date datetime,
+Population numeric,
+New_Vaccinations numeric,
+New_Deaths numeric,
+RollingPeopleVacc numeric,
+RollingPeopleDead numeric
+)
+
+INSERT INTO #PercentPopulationDead
+SELECT dea.location, dea.date, dea.population, vac.new_vaccinations, dea.new_deaths, SUM(CONVERT(bigint, vac.new_vaccinations)) OVER
+	(PARTITION BY dea.location ORDER BY dea.date) AS RollingPeopleVacc,
+	SUM(CONVERT(bigint, dea.new_deaths)) OVER 
+	(PARTITION BY dea.location ORDER BY dea.date) AS RollingPeopleDead
+FROM SQLCleaning.dbo.CovidDeaths$ dea
+JOIN SQLCleaning.dbo.CovidVaccinations$ vac
+	ON dea.location = vac.location 
+	and dea.date = vac.date
+
+SELECT *, (RollingPeopleVacc/population) *100 AS PercentVac, (RollingPeopleDead/population)*100 AS PercentDead
+FROM #PercentPopulationDead
